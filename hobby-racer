@@ -1,1 +1,265 @@
+import pygame
+import json
+import os
+import random
+import sys
 
+pygame.init()
+
+# -----------------------
+# CONFIG
+# -----------------------
+WIDTH, HEIGHT = 1100, 700
+FPS = 60
+SAVE_FILE = "save.json"
+
+screen = pygame.display.set_mode((WIDTH, HEIGHT))
+pygame.display.set_caption("Hobby Racer")
+clock = pygame.time.Clock()
+font = pygame.font.SysFont("Arial", 24)
+
+# -----------------------
+# RESOURCE FIX (for builds)
+# -----------------------
+def resource_path(relative_path):
+    try:
+        base_path = sys._MEIPASS
+    except Exception:
+        base_path = os.path.abspath(".")
+    return os.path.join(base_path, relative_path)
+
+# -----------------------
+# LOAD SPRITES
+# -----------------------
+player_sprite = pygame.image.load(resource_path("assets/images/player.png")).convert_alpha()
+traffic_sprite = pygame.image.load(resource_path("assets/images/traffic.png")).convert_alpha()
+police_sprite = pygame.image.load(resource_path("assets/images/police.png")).convert_alpha()
+
+player_sprite = pygame.transform.scale(player_sprite, (60, 100))
+traffic_sprite = pygame.transform.scale(traffic_sprite, (60, 100))
+police_sprite = pygame.transform.scale(police_sprite, (60, 100))
+
+# -----------------------
+# SAVE SYSTEM
+# -----------------------
+default_save = {"money": 2000, "selected_car": "Street", "unlocked": ["Street"]}
+if not os.path.exists(SAVE_FILE):
+    with open(SAVE_FILE, "w") as f:
+        json.dump(default_save, f)
+
+with open(SAVE_FILE, "r") as f:
+    save = json.load(f)
+
+def save_game():
+    with open(SAVE_FILE, "w") as f:
+        json.dump(save, f, indent=4)
+
+# -----------------------
+# CARS
+# -----------------------
+cars = {
+    "Street": {"max_speed": 220, "accel": 0.6, "grip": 0.92, "price": 0},
+    "Sport": {"max_speed": 260, "accel": 0.8, "grip": 0.95, "price": 5000},
+    "Hyper": {"max_speed": 320, "accel": 1.0, "grip": 0.97, "price": 15000}
+}
+
+# -----------------------
+# GAME STATE
+# -----------------------
+state = "MENU"
+selected_index = 0
+menu_timer = 0
+
+speed = 0
+player_x = 0
+velocity_x = 0
+nitro = 100
+heat = 0
+drift_score = 0
+particles = []
+
+traffic_cars = []
+police_cars = []
+lanes = [-200, -100, 0, 100, 200]
+
+bg_offset = 0
+
+# -----------------------
+# FUNCTIONS
+# -----------------------
+def draw_text(text, x, y, color=(255,255,255)):
+    screen.blit(font.render(text, True, color), (x,y))
+
+def reset_drive():
+    global speed, player_x, velocity_x, drift_score, heat, nitro
+    speed = velocity_x = drift_score = heat = 0
+    player_x = 0
+    nitro = 100
+    traffic_cars.clear()
+    police_cars.clear()
+    particles.clear()
+
+def spawn_traffic():
+    lane = random.choice(lanes)
+    y = random.randint(-800, -100)
+    traffic_cars.append([lane, y])
+
+def spawn_police():
+    lane = random.choice(lanes)
+    police_cars.append([lane, -200])
+
+# -----------------------
+# FULLSCREEN BUTTON
+# -----------------------
+fullscreen_rect = pygame.Rect(WIDTH - 180, 20, 160, 40)
+
+def draw_fullscreen_button():
+    pygame.draw.rect(screen, (20, 20, 20), fullscreen_rect)
+    pygame.draw.rect(screen, (255, 255, 255), fullscreen_rect, 2)
+    text = font.render("Fullscreen", True, (255, 255, 255))
+    screen.blit(text, (fullscreen_rect.x + 20, fullscreen_rect.y + 8))
+
+# -----------------------
+# MAIN LOOP
+# -----------------------
+running = True
+while running:
+    dt = clock.tick(FPS) / 16
+    screen.fill((40,160,200))
+
+    for event in pygame.event.get():
+        if event.type == pygame.QUIT:
+            running = False
+
+        if event.type == pygame.MOUSEBUTTONDOWN:
+            if fullscreen_rect.collidepoint(event.pos):
+                try:
+                    import js
+                    js.document.documentElement.requestFullscreen()
+                except:
+                    pygame.display.toggle_fullscreen()
+
+    keys = pygame.key.get_pressed()
+
+    # -----------------------
+    # MENU
+    # -----------------------
+    if state == "MENU":
+        draw_text("HOBBY RACER", 450, 200)
+        draw_text("1 - Drive", 480, 260)
+        draw_text("2 - Garage", 480, 300)
+        draw_text(f"Money: ${save['money']}", 480, 350)
+
+        if keys[pygame.K_1]:
+            reset_drive()
+            state = "DRIVE"
+
+        if keys[pygame.K_2]:
+            state = "GARAGE"
+
+    # -----------------------
+    # GARAGE
+    # -----------------------
+    elif state == "GARAGE":
+        car_list = list(cars.keys())
+        draw_text("GARAGE (ESC to exit)", 420, 100)
+
+        menu_timer -= dt
+
+        for i, car_name in enumerate(car_list):
+            color = (255, 255, 0) if i == selected_index else (255, 255, 255)
+            owned = car_name in save["unlocked"]
+            price = cars[car_name]["price"]
+            label = f"{car_name} {'(Owned)' if owned else f'- ${price}'}"
+            draw_text(label, 450, 200 + i * 40, color)
+
+        if menu_timer <= 0:
+            if keys[pygame.K_DOWN]:
+                selected_index = (selected_index + 1) % len(car_list)
+                menu_timer = 10
+            if keys[pygame.K_UP]:
+                selected_index = (selected_index - 1) % len(car_list)
+                menu_timer = 10
+
+        if keys[pygame.K_RETURN]:
+            chosen = car_list[selected_index]
+            price = cars[chosen]["price"]
+            if chosen in save["unlocked"]:
+                save["selected_car"] = chosen
+            elif save["money"] >= price:
+                save["money"] -= price
+                save["unlocked"].append(chosen)
+                save["selected_car"] = chosen
+            save_game()
+
+        if keys[pygame.K_ESCAPE]:
+            state = "MENU"
+
+    # -----------------------
+    # DRIVE
+    # -----------------------
+    elif state == "DRIVE":
+
+        car = cars[save["selected_car"]]
+
+        # ROAD LINES
+        for i in range(0, HEIGHT, 40):
+            pygame.draw.rect(screen, (255, 255, 255), (WIDTH // 2 - 5, i + (bg_offset % 40), 10, 20))
+        bg_offset += speed * 0.1
+
+        # Steering
+        steer = 0
+        if keys[pygame.K_LEFT]: steer -= 1
+        if keys[pygame.K_RIGHT]: steer += 1
+
+        velocity_x += steer * 2
+        velocity_x *= car["grip"]
+        player_x += velocity_x
+
+        # ROAD BOUNDARY
+        player_x = max(-220, min(220, player_x))
+
+        # Acceleration
+        if keys[pygame.K_UP]:
+            speed += car["accel"] * 5
+
+        speed -= speed * 0.01  # better friction
+        speed = max(0, min(speed, car["max_speed"]))
+
+        # Nitro
+        if keys[pygame.K_SPACE] and nitro > 0:
+            speed += 5
+            nitro -= 1
+        else:
+            nitro = min(100, nitro + 0.5)
+
+        # Earn money
+        save["money"] += int(speed * 0.01)
+
+        # Heat system
+        if speed > 200:
+            heat += 0.05
+        heat = max(0, heat - 0.01)
+
+        if heat > 20:
+            state = "GAME_OVER"
+
+        # Drift scoring
+        if abs(velocity_x) > 2 and speed > 120:
+            drift_score += abs(velocity_x)
+
+        if drift_score > 500:
+            save["money"] += 500
+            drift_score = 0
+
+        # Spawn traffic & police
+        if random.random() < 0.02:
+            spawn_traffic()
+
+        if heat > 5 and random.random() < 0.02:
+            spawn_police()
+
+        # Traffic
+        for car_obj in traffic_cars:
+            car_obj[1] += speed * 0.5
+            screen.blit(traffic_sprite, (WIDTH // 2 + car_obj[0
